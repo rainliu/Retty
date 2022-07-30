@@ -1,19 +1,17 @@
 use std::any::Any;
-use std::ops::Deref;
 use std::sync::{Arc, Mutex};
 
-use rayon_core::ThreadPool;
-
+use crate::channel::channel_handler_ctx_pipe::{
+    ChannelInboundHandlerCtxPipe, ChannelOutboundHandlerCtxPipe,
+};
+use crate::channel::handler::{ChannelInboundHandler, ChannelOutboundHandler};
 use crate::core::eventloop::EventLoop;
 use crate::errors::RettyErrorKind;
-use crate::handler::channel_handler_ctx_pipe::{ChannelInboundHandlerCtxPipe, ChannelOutboundHandlerCtxPipe};
-use crate::handler::handler::{ChannelInboundHandler, ChannelOutboundHandler};
 use crate::transport::channel::{Channel, InboundChannelCtx, OutboundChannelCtx};
 
 /**
 一个handlerctx 对应一个handler
  **/
-
 
 pub struct ChannelInboundHandlerCtx {
     pub(crate) id: String,
@@ -35,11 +33,12 @@ pub struct ChannelInboundHandlerCtx {
 }
 
 impl ChannelInboundHandlerCtx {
-    pub fn new(id: String,
-               eventloop: Arc<EventLoop>,
-               channel: Arc<Mutex<Channel>>,
-               handler: Arc<Mutex<Box<dyn ChannelInboundHandler + Send + Sync>>>,
-               outbound_context_pipe: Option<Arc<Mutex<ChannelOutboundHandlerCtxPipe>>>,
+    pub fn new(
+        id: String,
+        eventloop: Arc<EventLoop>,
+        channel: Arc<Mutex<Channel>>,
+        handler: Arc<Mutex<Box<dyn ChannelInboundHandler + Send + Sync>>>,
+        outbound_context_pipe: Option<Arc<Mutex<ChannelOutboundHandlerCtxPipe>>>,
     ) -> ChannelInboundHandlerCtx {
         ChannelInboundHandlerCtx {
             id,
@@ -51,14 +50,13 @@ impl ChannelInboundHandlerCtx {
             next_handler: None,
             head_ctx: None,
             head_handler: None,
-            outbound_context_pipe
+            outbound_context_pipe,
         }
     }
 
     pub fn id(&self) -> String {
-        return self.id.clone();
+        self.id.clone()
     }
-
 
     pub fn fire_channel_active(&mut self) {
         if self.next_ctx.is_some() {
@@ -93,7 +91,6 @@ impl ChannelInboundHandlerCtx {
         }
     }
 
-
     pub fn fire_channel_exception(&mut self, error: RettyErrorKind) {
         if self.next_ctx.is_some() {
             let next_ctx = self.next_ctx.as_ref().unwrap();
@@ -105,7 +102,6 @@ impl ChannelInboundHandlerCtx {
         }
     }
 
-
     pub(crate) fn channel_active(&mut self, ctx: Arc<Mutex<ChannelInboundHandlerCtx>>) {
         let current_ctx = ctx.lock().unwrap();
         let mut next_handler = current_ctx.handler.lock().unwrap();
@@ -113,7 +109,6 @@ impl ChannelInboundHandlerCtx {
         let mut ctx_ref_clone_ref = ctx_ref_clone.lock().unwrap();
         next_handler.channel_active(&mut *ctx_ref_clone_ref);
     }
-
 
     pub fn write_and_flush(&mut self, message: &mut dyn Any) {
         if self.outbound_context_pipe.is_some() {
@@ -126,8 +121,7 @@ impl ChannelInboundHandlerCtx {
     }
 
     pub fn channel(&mut self) -> &mut InboundChannelCtx {
-        let mut ch_ctx = &mut self.channel_ctx;
-        return ch_ctx;
+        &mut self.channel_ctx
     }
 
     pub fn close(&mut self) {
@@ -138,7 +132,6 @@ impl ChannelInboundHandlerCtx {
         self.eventloop.clone()
     }
 }
-
 
 ///
 /// 出站处理管道处理顺序与入站相反
@@ -157,14 +150,14 @@ pub struct ChannelOutboundHandlerCtx {
     pub(crate) next_ctx: Option<Arc<Mutex<ChannelOutboundHandlerCtx>>>,
     pub(crate) head_handler: Option<Arc<Mutex<Box<dyn ChannelOutboundHandler + Send + Sync>>>>,
     pub(crate) next_handler: Option<Arc<Mutex<Box<dyn ChannelOutboundHandler + Send + Sync>>>>,
-
 }
 
 impl ChannelOutboundHandlerCtx {
-    pub fn new(id: String,
-               eventloop: Arc<EventLoop>,
-               channel: Arc<Mutex<Channel>>,
-               handler: Arc<Mutex<Box<dyn ChannelOutboundHandler + Send + Sync>>>,
+    pub fn new(
+        id: String,
+        eventloop: Arc<EventLoop>,
+        channel: Arc<Mutex<Channel>>,
+        handler: Arc<Mutex<Box<dyn ChannelOutboundHandler + Send + Sync>>>,
     ) -> ChannelOutboundHandlerCtx {
         ChannelOutboundHandlerCtx {
             id,
@@ -194,12 +187,11 @@ impl ChannelOutboundHandlerCtx {
     }
 
     pub fn channel(&mut self) -> &mut OutboundChannelCtx {
-        let mut ch_ctx = &mut self.channel_ctx;
-        return ch_ctx;
+        &mut self.channel_ctx
     }
 
     pub fn id(&self) -> String {
-        return self.id.clone();
+        self.id.clone()
     }
 
     pub fn event_loop(&mut self) -> Arc<EventLoop> {

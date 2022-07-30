@@ -1,13 +1,11 @@
 use std::any::Any;
 use std::io::ErrorKind;
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::Ordering;
 
-use bytebuf_rs::bytebuf::{ByteBuf, slice_util};
+use bytebuf_rs::bytebuf::{slice_util, ByteBuf};
 
+use crate::channel::channel_handler_ctx::ChannelInboundHandlerCtx;
+use crate::channel::handler::ChannelInboundHandler;
 use crate::errors::RettyErrorKind;
-use crate::handler::channel_handler_ctx::ChannelInboundHandlerCtx;
-use crate::handler::handler::ChannelInboundHandler;
 
 ///
 /// 第一个字段为长度字段的解码器
@@ -16,19 +14,23 @@ pub struct FirstIntegerLengthFieldDecoder {
     all_buf: Vec<u8>,
 }
 
+impl Default for FirstIntegerLengthFieldDecoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl FirstIntegerLengthFieldDecoder {
     pub fn new() -> Self {
         FirstIntegerLengthFieldDecoder {
-            all_buf: Vec::<u8>::new()
+            all_buf: Vec::<u8>::new(),
         }
     }
 }
 
-
 impl ChannelInboundHandler for FirstIntegerLengthFieldDecoder {
     fn id(&self) -> String {
-        return "FirstIntegerLengthFieldDecoder".to_string();
+        "FirstIntegerLengthFieldDecoder".to_string()
     }
 
     fn channel_active(&mut self, channel_handler_ctx: &mut ChannelInboundHandlerCtx) {
@@ -39,12 +41,15 @@ impl ChannelInboundHandler for FirstIntegerLengthFieldDecoder {
         channel_handler_ctx.fire_channel_inactive();
     }
 
-    fn channel_read(&mut self, channel_handler_ctx: &mut ChannelInboundHandlerCtx, message: &mut dyn Any) {
+    fn channel_read(
+        &mut self,
+        channel_handler_ctx: &mut ChannelInboundHandlerCtx,
+        message: &mut dyn Any,
+    ) {
         let buf_option = message.downcast_ref::<ByteBuf>();
-        if buf_option.is_some() {
-            let buf = buf_option.unwrap();
+        if let Some(buf) = buf_option {
             let n = buf.len();
-            if self.all_buf.len() != 0 {
+            if !self.all_buf.is_empty() {
                 self.all_buf = slice_util::append::<u8>(&self.all_buf, &buf[..n]);
             } else {
                 self.all_buf = buf[..n].to_owned();
@@ -73,7 +78,11 @@ impl ChannelInboundHandler for FirstIntegerLengthFieldDecoder {
         }
     }
 
-    fn channel_exception(&mut self, channel_handler_ctx: &mut ChannelInboundHandlerCtx, error: RettyErrorKind) {
+    fn channel_exception(
+        &mut self,
+        channel_handler_ctx: &mut ChannelInboundHandlerCtx,
+        error: RettyErrorKind,
+    ) {
         channel_handler_ctx.fire_channel_exception(error);
     }
 }

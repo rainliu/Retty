@@ -1,10 +1,13 @@
-use std::fmt::{Formatter, Pointer};
-use std::sync::Arc;
-
-use crate::handler::handler::{ChannelInboundHandler, ChannelOutboundHandler};
+use crate::channel::handler::{ChannelInboundHandler, ChannelOutboundHandler};
 
 pub struct ChannelInboundHandlerPipe {
     pub handlers: Vec<Box<dyn ChannelInboundHandler + Send + Sync>>,
+}
+
+impl Default for ChannelInboundHandlerPipe {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ChannelInboundHandlerPipe {
@@ -22,9 +25,14 @@ impl ChannelInboundHandlerPipe {
     }
 }
 
-
 pub struct ChannelOutboundHandlerPipe {
     pub handlers: Vec<Box<dyn ChannelOutboundHandler + Send + Sync>>,
+}
+
+impl Default for ChannelOutboundHandlerPipe {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ChannelOutboundHandlerPipe {

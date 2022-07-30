@@ -1,37 +1,37 @@
-use std::borrow::Borrow;
 use std::io::ErrorKind;
-use std::ops::Deref;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::thread;
-use std::thread::Thread;
 use std::time::Duration;
 
 use bytebuf_rs::bytebuf::ByteBuf;
 use chashmap::CHashMap;
 use mio::{Events, Poll, Token};
 use rayon_core::ThreadPool;
-use uuid::Uuid;
 
+use crate::channel::channel_handler_ctx_pipe::ChannelInboundHandlerCtxPipe;
 use crate::errors::RettyErrorKind;
-use crate::handler::channel_handler_ctx_pipe::{ChannelInboundHandlerCtxPipe, ChannelOutboundHandlerCtxPipe};
-use crate::transport::channel::{Channel, InboundChannelCtx, OutboundChannelCtx};
+use crate::transport::channel::Channel;
 
 pub struct EventLoop {
     pub(crate) excutor: Arc<ThreadPool>,
     pub(crate) selector: Arc<Poll>,
     pub(crate) channel_map: Arc<CHashMap<Token, Arc<Mutex<Channel>>>>,
-    pub(crate) channel_inbound_handler_ctx_pipe_map: Arc<CHashMap<Token, ChannelInboundHandlerCtxPipe>>,
+    pub(crate) channel_inbound_handler_ctx_pipe_map:
+        Arc<CHashMap<Token, ChannelInboundHandlerCtxPipe>>,
     pub(crate) stopped: Arc<AtomicBool>,
 }
-
 
 impl EventLoop {
     pub fn new(i: usize) -> EventLoop {
         EventLoop {
-            excutor: Arc::new(rayon::ThreadPoolBuilder::new().num_threads(1).thread_name(move |_| {
-                format!("eventloop-{}", i)
-            }).build().unwrap()),
+            excutor: Arc::new(
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(1)
+                    .thread_name(move |_| format!("eventloop-{}", i))
+                    .build()
+                    .unwrap(),
+            ),
             selector: Arc::new(Poll::new().unwrap()),
             channel_map: Arc::new(CHashMap::new()),
             channel_inbound_handler_ctx_pipe_map: Arc::new(CHashMap::new()),
@@ -42,21 +42,26 @@ impl EventLoop {
         self.stopped.store(true, Ordering::Relaxed);
     }
 
-    pub(crate) fn attach(&self, id: usize, ch: Arc<Mutex<Channel>>, mut ctx__inbound_ctx_pipe: ChannelInboundHandlerCtxPipe) {
+    pub(crate) fn attach(
+        &self,
+        id: usize,
+        ch: Arc<Mutex<Channel>>,
+        ctx_inbound_ctx_pipe: ChannelInboundHandlerCtxPipe,
+    ) {
         let channel = ch.clone();
-        let channel_2 = ch.clone();
+        let channel_2 = ch;
         // 一个channel注册一个selector
         {
             let channel = channel.lock().unwrap();
             channel.register(&self.selector);
         }
         {
-            ctx__inbound_ctx_pipe.head_channel_active();
+            ctx_inbound_ctx_pipe.head_channel_active();
         }
-        self.channel_inbound_handler_ctx_pipe_map.insert_new(Token(id), ctx__inbound_ctx_pipe);
+        self.channel_inbound_handler_ctx_pipe_map
+            .insert_new(Token(id), ctx_inbound_ctx_pipe);
         self.channel_map.insert_new(Token(id), channel_2);
     }
-
 
     pub(crate) fn run(&self) {
         let selector = Arc::clone(&self.selector);
@@ -67,7 +72,9 @@ impl EventLoop {
         self.excutor.spawn(move || {
             let mut events = Events::with_capacity(1024);
             while !stopped.load(Ordering::Relaxed) {
-                selector.poll(&mut events, Some(Duration::from_millis(200))).unwrap();
+                selector
+                    .poll(&mut events, Some(Duration::from_millis(200)))
+                    .unwrap();
 
                 for e in events.iter() {
                     let channel = match channel_map.remove(&e.token()) {
@@ -80,41 +87,37 @@ impl EventLoop {
                                     ch.close();
                                     None
                                 }
-                                Ok(n) => {
-                                    None
-                                }
-                                Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                                    None
-                                }
-                                Err(e) => {
-                                    Some(e)
-                                }
+                                Ok(_) => None,
+                                Err(e) if e.kind() == ErrorKind::WouldBlock => None,
+                                Err(e) => Some(e),
                             };
                             if !ch.is_closed() {
                                 channel_map.insert_new(e.token(), ch_clone);
                             }
                             Some((ch.clone(), buf.clone(), ch_ret))
                         }
-                        None => None
+                        None => None,
                     };
                     if let Some((ch, buf, err)) = channel {
                         if ch.is_closed() {
                             {
-                                let ctx_pipe = channel_inbound_ctx_pipe_map.get_mut(&e.token()).unwrap();
+                                let ctx_pipe =
+                                    channel_inbound_ctx_pipe_map.get_mut(&e.token()).unwrap();
                                 ctx_pipe.head_channel_inactive();
                             }
                         }
                         if !ch.is_closed() {
-                            if err.is_some() {
-                                let ctx_pipe = channel_inbound_ctx_pipe_map.get_mut(&e.token()).unwrap();
-                                let error: RettyErrorKind = err.unwrap().into();
+                            if let Some(err) = err {
+                                let ctx_pipe =
+                                    channel_inbound_ctx_pipe_map.get_mut(&e.token()).unwrap();
+                                let error: RettyErrorKind = err.into();
                                 ctx_pipe.head_channel_exception(error);
                             } else {
                                 let mut bytebuf = ByteBuf::new_from(&buf[..]);
-                                let ctx_pipe = channel_inbound_ctx_pipe_map.get_mut(&e.token()).unwrap();
+                                let ctx_pipe =
+                                    channel_inbound_ctx_pipe_map.get_mut(&e.token()).unwrap();
                                 ctx_pipe.head_channel_read(&mut bytebuf);
                             }
-
                         }
                     }
                 }
@@ -122,9 +125,10 @@ impl EventLoop {
         });
     }
 
-
     pub fn schedule_delayed<F>(&self, task: F, delay_ms: usize)
-        where F: FnOnce() + Send + 'static {
+    where
+        F: FnOnce() + Send + 'static,
+    {
         thread::sleep(Duration::from_millis(delay_ms as u64));
         self.excutor.spawn(task)
     }
@@ -154,15 +158,19 @@ impl EventLoopGroup {
         EventLoopGroup::new(n)
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<Arc<EventLoop>> {
         if self.next > self.evenetloop_num {
             self.next = 0;
         }
-        self.next = self.next + 1;
+        self.next += 1;
         Some(self.group.get(self.next - 1).unwrap().clone())
     }
 
-    pub fn execute<F>(&mut self, task: F) where F: FnOnce() + Send + 'static {
+    pub fn execute<F>(&mut self, task: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
         let executor = self.next().unwrap();
         executor.excutor.spawn(task);
     }
@@ -171,4 +179,3 @@ impl EventLoopGroup {
         &self.group
     }
 }
-

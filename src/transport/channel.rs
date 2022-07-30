@@ -7,21 +7,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytebuf_rs::bytebuf::ByteBuf;
-use chashmap::{CHashMap, ReadGuard};
-use crossbeam::channel::{bounded, Receiver, select, Sender, tick};
-use mio::{Poll, PollOpt, Ready, Token};
+use chashmap::CHashMap;
+use crossbeam::channel::{bounded, Receiver, Sender};
 use mio::net::TcpStream;
-use rayon_core::ThreadPool;
+use mio::{Poll, PollOpt, Ready, Token};
 
 use crate::core::eventloop::EventLoop;
-use crate::handler::channel_handler_ctx_pipe::ChannelOutboundHandlerCtxPipe;
 
 #[derive(Clone)]
 pub enum ChannelOptions {
     NUMBER(usize),
     BOOL(bool),
 }
-
 
 pub struct Channel {
     id: Token,
@@ -32,21 +29,19 @@ pub struct Channel {
     inner_ch: (Sender<bool>, Receiver<bool>),
     last_read_time_ms: u64,
     read_idle_timeout_ms: u64,
-
 }
-
 
 impl Clone for Channel {
     fn clone(&self) -> Self {
         Channel {
-            id: self.id.clone(),
+            id: self.id,
             stream: self.stream.try_clone().unwrap(),
-            closed: self.closed.clone(),
+            closed: self.closed,
             eventloop: self.eventloop.clone(),
             attribute: self.attribute.clone(),
             inner_ch: self.inner_ch.clone(),
             last_read_time_ms: self.last_read_time_ms,
-            read_idle_timeout_ms: self.read_idle_timeout_ms.clone(),
+            read_idle_timeout_ms: self.read_idle_timeout_ms,
         }
     }
 
@@ -56,68 +51,62 @@ impl Clone for Channel {
 }
 
 impl Channel {
-    pub fn create(id: Token, opts: HashMap<String, ChannelOptions>, eventloop: Arc<EventLoop>, stream: TcpStream,
+    pub fn create(
+        id: Token,
+        opts: HashMap<String, ChannelOptions>,
+        eventloop: Arc<EventLoop>,
+        stream: TcpStream,
     ) -> Channel {
         let tcp_stream = stream.try_clone().unwrap();
-        let mut read_idle_timeout_ms = 50000u64;// 50 secs
+        let mut read_idle_timeout_ms = 50000u64; // 50 secs
         for (k, ref v) in opts.iter() {
             match k.as_ref() {
-                "read_idle_timeout_ms" => {
-                    match v {
-                        ChannelOptions::NUMBER(read_idle_timeout) => {
-                            read_idle_timeout_ms = (*read_idle_timeout as u64);
-                        }
-                        ChannelOptions::BOOL(_) => {}
+                "read_idle_timeout_ms" => match v {
+                    ChannelOptions::NUMBER(read_idle_timeout) => {
+                        read_idle_timeout_ms = *read_idle_timeout as u64;
                     }
-                }
-                "ttl" => {
-                    match v {
-                        ChannelOptions::NUMBER(ttl) => {
-                            tcp_stream.set_ttl(*ttl as u32);
-                        }
-                        ChannelOptions::BOOL(_) => {}
+                    ChannelOptions::BOOL(_) => {}
+                },
+                "ttl" => match v {
+                    ChannelOptions::NUMBER(ttl) => {
+                        tcp_stream.set_ttl(*ttl as u32).unwrap();
                     }
-                }
-                "linger" => {
-                    match v {
-                        ChannelOptions::NUMBER(linger) => {
-                            tcp_stream.set_linger(Some(Duration::from_millis(*linger as u64)));
-                        }
-                        ChannelOptions::BOOL(_) => {}
+                    ChannelOptions::BOOL(_) => {}
+                },
+                "linger" => match v {
+                    ChannelOptions::NUMBER(linger) => {
+                        tcp_stream
+                            .set_linger(Some(Duration::from_millis(*linger as u64)))
+                            .unwrap();
                     }
-                }
-                "nodelay" => {
-                    match v {
-                        ChannelOptions::NUMBER(_) => {}
-                        ChannelOptions::BOOL(b) => {
-                            tcp_stream.set_nodelay(*b);
-                        }
+                    ChannelOptions::BOOL(_) => {}
+                },
+                "nodelay" => match v {
+                    ChannelOptions::NUMBER(_) => {}
+                    ChannelOptions::BOOL(b) => {
+                        tcp_stream.set_nodelay(*b).unwrap();
                     }
-                }
-                "keep_alive" => {
-                    match v {
-                        ChannelOptions::NUMBER(keepalive) => {
-                            tcp_stream.set_keepalive(Some(Duration::from_millis(*keepalive as u64)));
-                        }
-                        ChannelOptions::BOOL(_) => {}
+                },
+                "keep_alive" => match v {
+                    ChannelOptions::NUMBER(keepalive) => {
+                        tcp_stream
+                            .set_keepalive(Some(Duration::from_millis(*keepalive as u64)))
+                            .unwrap();
                     }
-                }
-                "recv_buf_size" => {
-                    match v {
-                        ChannelOptions::NUMBER(bufsize) => {
-                            tcp_stream.set_recv_buffer_size(*bufsize);
-                        }
-                        ChannelOptions::BOOL(_) => {}
+                    ChannelOptions::BOOL(_) => {}
+                },
+                "recv_buf_size" => match v {
+                    ChannelOptions::NUMBER(bufsize) => {
+                        tcp_stream.set_recv_buffer_size(*bufsize).unwrap();
                     }
-                }
-                "send_buf_size" => {
-                    match v {
-                        ChannelOptions::NUMBER(bufsize) => {
-                            tcp_stream.set_send_buffer_size(*bufsize);
-                        }
-                        ChannelOptions::BOOL(_) => {}
+                    ChannelOptions::BOOL(_) => {}
+                },
+                "send_buf_size" => match v {
+                    ChannelOptions::NUMBER(bufsize) => {
+                        tcp_stream.set_send_buffer_size(*bufsize).unwrap();
                     }
-                }
+                    ChannelOptions::BOOL(_) => {}
+                },
                 _ => {}
             }
         }
@@ -129,7 +118,7 @@ impl Channel {
             attribute: CHashMap::new(),
             inner_ch: bounded(1024),
             last_read_time_ms: 0,
-            read_idle_timeout_ms: read_idle_timeout_ms.clone(),
+            read_idle_timeout_ms,
         }
     }
 
@@ -142,8 +131,8 @@ impl Channel {
     }
 
     pub(crate) fn write_bytebuf(&mut self, buf: &ByteBuf) {
-        self.stream.write(buf.available_bytes());
-        self.stream.flush();
+        let _ = self.stream.write(buf.available_bytes());
+        self.stream.flush().unwrap();
     }
 
     pub(crate) fn set_last_read_time(&mut self, ms: u64) {
@@ -159,21 +148,16 @@ impl Channel {
     }
 
     pub fn register(&self, poll: &Poll) {
-        poll.register(
-            &self.stream,
-            self.id,
-            Ready::readable(),
-            PollOpt::edge(),
-        );
+        poll.register(&self.stream, self.id, Ready::readable(), PollOpt::edge())
+            .unwrap();
     }
 
     pub fn read(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
         self.stream.read_to_end(buf)
     }
 
-
     pub fn close(&mut self) {
-        self.stream.shutdown(Shutdown::Both);
+        self.stream.shutdown(Shutdown::Both).unwrap();
         self.closed = true;
     }
 
@@ -191,14 +175,12 @@ pub struct InboundChannelCtx {
 
 impl InboundChannelCtx {
     pub(crate) fn new(channel: Arc<Mutex<Channel>>) -> InboundChannelCtx {
-        InboundChannelCtx {
-            channel
-        }
+        InboundChannelCtx { channel }
     }
 
     pub fn id(&self) -> String {
         let channel = self.channel.lock().unwrap();
-        format!("{}", channel.id.0).clone()
+        format!("{}", channel.id.0)
     }
     pub fn set_attribute(&mut self, key: String, value: Box<dyn Any + Send + Sync>) {
         let channel = self.channel.lock().unwrap();
@@ -220,7 +202,6 @@ impl InboundChannelCtx {
         let channel = self.channel.lock().unwrap();
         channel.local_addr()
     }
-
 
     pub fn is_active(&self) -> bool {
         let channel = self.channel.lock().unwrap();
@@ -254,14 +235,12 @@ pub struct OutboundChannelCtx {
 
 impl OutboundChannelCtx {
     pub(crate) fn new(channel: Arc<Mutex<Channel>>) -> OutboundChannelCtx {
-        OutboundChannelCtx {
-            channel
-        }
+        OutboundChannelCtx { channel }
     }
 
     pub fn id(&self) -> String {
         let channel = self.channel.lock().unwrap();
-        format!("{}", channel.id.0).clone()
+        format!("{}", channel.id.0)
     }
 
     pub(crate) fn write_bytebuf(&mut self, buf: &ByteBuf) {
